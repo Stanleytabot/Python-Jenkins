@@ -1,1 +1,119 @@
 
+pipeline {
+  agent {
+    node { 
+      label 'test-db'
+    } 
+  }
+  stages {
+    stage('Git clone') {
+      steps {
+        git branch: 'Test', credentialsId: '4f3e02f8-e238-4cde-a239-6a8fd74e74e2', url: 'https://github.com/UTH-CHCD/PipelineDB.git'
+      }
+    }
+    stage('Server setup') {
+      steps {
+        sh '''#!/bin/bash
+          set -e
+          
+          # Checking if PostgreSQL is installed
+          if ! command -v psql &> /dev/null; then
+            echo "PostgreSQL is not installed. Installing..."
+            sudo apt-get update 
+            sudo apt-get install -y postgresql-client
+            echo "PostgreSQL installed successfully!"
+          else
+            echo "PostgreSQL is already installed."
+          fi
+
+          # Confirming installation
+          psql --version
+        '''
+      }
+    }
+    stage('Creating user account') {
+      steps {
+        sh '''#!/bin/bash
+          set -e 
+
+          # Checking if database user already exists
+          if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$USER'" | grep -q 1; then
+            echo "User '$USER' already exists."
+          else
+            echo "User '$USER' does not exist. Creating user..."
+            sudo -u postgres createuser --superuser $USER
+            echo "Created '$USER' user. Continuing..."
+          fi
+
+          # Checking if database already exists
+          if sudo -u postgres psql -lqt | awk '{print $1}' | grep -qw "$USER"; then
+            echo "Database '$USER' already exists."
+          else
+            echo "'$USER' database does not exist. Creating database..."
+            sudo -u postgres createdb $USER
+            echo "Database '$USER' created successfully. Continuing..."
+          fi
+        '''
+      }
+    }
+    stage('Change password for postgres user') {
+      steps {
+        script {
+          withCredentials([usernamePassword(credentialsId: '5acf431b-0bdd-4958-9d3a-4ddec595b32a', passwordVariable: 'password',  usernameVariable: 'username')]) {
+            sh '''#!/bin/bash
+              set -e
+              sudo -u postgres psql postgres -c "ALTER USER postgres WITH PASSWORD '$password';"
+              echo "postgres user password successfully reset"
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Create APCD_ADMIN user') {
+      steps {
+        script {
+          withCredentials([usernamePassword(credentialsId: '5acf431b-0bdd-4958-9d3a-4ddec595b32a', passwordVariable: 'password',  usernameVariable: 'username')]) {
+            sh '''#!/bin/bash
+              set -e
+              existing_role=$(sudo -u postgres psql -U postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='apcd_admin'")
+              if [[ $existing_role -eq 1 ]]; then
+                echo "Role apcd_admin already exists."
+              else
+                sudo -u postgres psql postgres -c "CREATE ROLE apcd_admin WITH LOGIN SUPERUSER CREATEROLE CREATEDB PASSWORD '$password';"
+                echo "Role apcd_admin created successfully."
+              fi
+              
+              # Setting role to apcd_admin
+              sudo -u postgres psql postgres -c "SET ROLE apcd_admin;"
+              
+              #sudo -u postgres psql postgres -c "SELECT CURRENT_USER, SESSION_USER;"
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Create pipeline database') {
+      steps { 
+        sh '''#!/bin/bash
+          set -e
+          sudo -u postgres psql postgres -c 
+          sudo -u postgres psql postgres -c 
+          sudo -u postgres psql postgres -c 
+          sudo -u postgres psql postgres -c 
+        '''
+      }
+    }
+
+    stage('Create backup scripts') {
+      steps { 
+        sh '''#!/bin/bash
+          set -e
+          sudo -u postgres pg_dumpall -c -g -O > /home/kennethn/workspace/Test/pl_globals_03-16-23.sql
+          sudo -u postgres pg_dump -s -O -d pipeline > /home/kennethn/workspace/Test/pl_sch_03-16-23.sql
+        '''
+      }
+    }
+  }
+}
