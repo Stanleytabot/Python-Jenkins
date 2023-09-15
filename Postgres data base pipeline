@@ -110,8 +110,8 @@ pipeline {
       steps { 
         sh '''#!/bin/bash
           set -e
-          sudo -u postgres pg_dumpall -c -g -O > /home/kennethn/workspace/Test/pl_globals_03-16-23.sql
-          sudo -u postgres pg_dump -s -O -d pipeline > /home/kennethn/workspace/Test/pl_sch_03-16-23.sql
+          sudo -u postgres pg_dumpall -c -g -O > 
+          sudo -u postgres pg_dump -s -O -d pipeline > 
         '''
       }
     }
