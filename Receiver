@@ -1,1 +1,129 @@
+pipeline {
+    agent {
+        node {
+            label 'Agent-etl'
+        }
+    }
+   
+    stages {
+        stage('User setup') {
+            steps {
+                sh '''#!/bin/bash
+                set -e
+                username="svcRec"
+               
+                # Checking if the svcRec user already exists
+                if id "$username" >/dev/null 2>&1; then
+                  echo "User $username already exists. Continuing..."
+                else
+                # Creating the svcRec user
+                  sudo useradd "$username"
+                  echo "User $username created successfully."
+                fi
+                '''
+            }
+        }
 
+        stage('Logging into svcRec user and cloning repository') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: '4f3e02f8-e238-4cde-a239-6a8fd74e74e2', passwordVariable: 'password', usernameVariable: 'username')]) {
+                        sh '''#!/bin/bash
+                        set -e
+                        directory="/home/svcRec/APCD-Dev"
+                       
+                        # Checking if the directory exists
+                        if [ -d "$directory" ]; then
+                            echo "$directory already exists. Continuing"
+                        else
+                            # Creating the directory
+                            sudo mkdir "$directory"
+                            sudo chown svcRec:svcRec "$directory"
+                            echo "Directory $directory created."
+                        fi
+                        cd /home/svcRec/APCD-Dev
+                        sudo rm -rf apcd-ReceiveHandler
+                        sudo -u svcRec git clone -b dev "https://$username:$password@github.com/UTH-CHCD/apcd-ReceiveHandler.git"
+                        TOC=$(stat -c %y apcd-ReceiveHandler/)
+                        echo "Directories successfully cloned at $TOC"
+                        echo "Login and Cloning stage successful"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Making apcd-dev directories') {
+            steps {
+                sh '''#!/bin/bash
+                directories=(
+                "/apcd/submissions"
+                "/apcd-dev/submissions"
+                "/apcd-dev/received/test/gpg"
+                "/apcd-dev/received/test/junk"
+                "/apcd-dev/received/test/split"
+                "/apcd-dev/received/test/gpg/temp"
+                "/apcd/gpgHome"
+                "/apcd-dev/received/originals"
+                "/apcd-dev/dev_wip/Logs"
+                )
+               
+                # Performing a for loop for the directories
+                for directory in "${directories[@]}"; do
+                  if [ -d "$directory" ]; then
+                    echo "'$directory' already exists. Continuing..."
+                  else
+                    sudo mkdir -p "$directory"
+                    echo "Created '$directory' directory"
+                  fi
+                done
+                echo "Directories are present..."
+                '''
+            }
+        }
+
+        stage('Receiver environmental setup') {
+            steps {
+                sh '''#!/bin/bash
+                    set -e
+                    conda_env="receiver"
+                    source ~/.bashrc
+                    source /opt/miniconda3/etc/profile.d/conda.sh
+                    if conda env list | grep -q "$conda_env"; then
+                      echo "Conda environment '$conda_env' already exists. Continuing..."
+                    else
+                      echo "Creating Conda environment '$conda_env'..."
+                      conda env create --name "$conda_env" --file /home/svcRec/APCD-Dev/apcd-ReceiveHandler/environment.yml
+                      echo "Conda environment '$conda_env' created.'"
+                    fi
+                    conda activate receiver
+                    conda env list
+                    echo "Receiver environment is running successfully..."
+                '''
+            }
+        }
+
+        stage('Copying scripts to /usr/local/bin') {
+            steps {
+                sh '''#!/bin/bash
+                set -e
+                sudo cp -rf /home/svcRec/APCD-Dev/APCD-ReceiveHandler/scripts/* /usr/local/bin
+                TOE=$(stat -c %y /usr/local/bin/apcd_mv_files.sh)
+                echo "/usr/local/bin/ deployment files overwritten at $TOE"
+                '''
+            }
+        }
+    }
+           
+    post {
+        always {
+            script {
+                if (currentBuild.result == 'SUCCESS') {
+                    echo "Deployment successful! Proof of concept line."
+                } else {
+                    echo "Deployment failed!"    
+                }
+            }
+        }
+    }
+}
