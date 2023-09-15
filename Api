@@ -1,1 +1,97 @@
+pipeline {
+  agent {
+     node { 
+        label 'Agent-Api'
+        } 
+  }
+  stages {
+    stage('Git clone') {
+      steps {
+        git branch: 'main', credentialsId: '4f3e02f8-e238-4cde-a239-6a8fd74e74e2', url: 'https://github.com/UTH-CHCD/APCD-API.git'
+      }
+    }
 
+    stage('create and activate environment') {
+     steps {
+        sh '''#!/bin/bash
+            set -e
+            conda_env="apienv"
+            source ~/.bashrc
+            source /opt/miniconda3/etc/profile.d/conda.sh
+            
+            # Checking if Conda environment apienv exists
+            if conda env list | grep -q "$conda_env"; then
+              echo "Conda environment '$conda_env' already exists. Updating..."
+              conda env update --file /home/apcd-web-user/workspace/APCD-API/environment.yml --name "$conda_env"
+              echo "Update complete"
+            else
+              echo "Creating Conda environment '$conda_env'..."
+              conda env create --name "$conda_env" --file /home/apcd-web-user/workspace/APCD-API/environment.yml
+              echo "Conda environment '$conda_env' created.'"
+            fi
+            conda activate apienv
+            conda env list
+            sudo cp -rf /home/apcd-web-user/workspace/APCD-API/'deploy scripts'/apcd-api.service /etc/systemd/system/
+        '''
+      }
+    }
+    
+    stage('Create API systemd service') {
+      steps {
+        sh '''#!/bin/bash
+            set -e
+            sudo systemctl daemon-reload
+            sudo systemctl enable apcd-api
+            sudo systemctl start apcd-api
+            sudo systemctl status apcd-api
+            sudo systemctl restart apcd-api.service
+            echo "apcd-api service is active."
+        '''
+      }
+    }
+
+    stage('SETUP NGINX server') {
+
+      steps {
+        sh '''#!/bin/bash
+        # Renaming nginx-apcd-api file and Copying
+        mv -f ~/workspace/APCD-API/'deploy scripts'/nginx-apcd-api ~/workspace/APCD-API/'deploy scripts'/apcd-api
+        echo "nginx-apcd-api has been renamed to apcd-api"
+        sudo chmod a+x ~/workspace/APCD-API/'deploy scripts'/apcd-api
+        sudo cp -rf /home/apcd-web-user/workspace/APCD-API/'deploy scripts'/apcd-api /etc/nginx/sites-available/
+        '''
+      } 
+
+    }
+
+    stage('Create symbolic link in sites-enabled') {
+      steps {
+        sh '''#!/bin/bash
+        set -e
+        link_path="/etc/nginx/sites-enabled/apcd-api"
+        target_path="/etc/nginx/sites-available/apcd-api"
+        
+        # Checking if symbolic link is present
+        if [ ! -L "$link_path" ]; then
+          sudo ln -s "$target_path" "$link_path"
+          echo "Symbolic link created."
+        else
+          echo "Symbolic link already exists."
+        fi
+        '''
+      }
+    }
+
+    stage('Test Configuration') {
+      steps {
+        sh '''#!/bin/bash 
+            set -e
+            sudo nginx -s reload
+            sudo nginx -t
+            sudo systemctl status nginx
+        '''
+      }
+    }
+
+  }
+}
