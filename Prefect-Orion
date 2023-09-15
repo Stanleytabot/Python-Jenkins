@@ -1,1 +1,188 @@
+pipeline {
+  agent {
+    node {
+      label 'Agent-etl'
+    }
+  }
 
+  stages {
+    stage('Checkout Scm') {
+      steps {
+        git branch: 'dev', credentialsId: '4f3e02f8-e238-4cde-a239-6a8fd74e74e2', url: 'https://github.com/UTH-CHCD/TX-APCD.git'
+      }
+    }
+
+    stage('create group and set user to group') {
+      steps {
+        sh '''#!/bin/bash
+          set -e
+          username="prefect"
+          group_name="G-824050"
+
+          # Checking that group G-824050 exists
+          if grep -q "^$group_name:" /etc/group; then
+            echo "Group $group_name already exists. Continuing ..."
+          else
+            # Creating group
+            sudo groupadd "$group_name"
+            echo "Group $group_name created successfully."
+          fi
+
+          # Checking if the prefect user already exists
+          if id "$username" >/dev/null 2>&1; then
+            echo "User $username already exists. Continuing..."
+          else
+            # Creating prefect user and adding it to target group
+            echo "Creating $username user..."
+            sudo useradd "$username"
+            sudo usermod -a -G "$group_name" "$username"
+            echo "User $username created successfully."
+          fi
+        '''
+      }
+    }
+
+    stage('update grp&right-miniconda') {
+      steps {
+        sh '''#!/bin/bash
+          set -e
+          group_name="G-824050"
+          
+          # Changing group ownership of the /opt/miniconda3 directory
+          sudo chgrp -R "$group_name" /opt/miniconda3
+          sudo chmod -R 774 /opt/miniconda3
+          GO=$(stat -c %G /opt/miniconda3)
+          echo "Ownership of the /opt/miniconda3 directory belongs to the $GO group"
+        '''
+      }
+    }
+
+    stage('Change group and mode') {
+      steps {
+        sh '''#!/bin/bash
+          set -e
+          group_name="G-824050"
+          
+          # Changing group ownership of the /home/garretmunoz/workspace/TX-APCD-PREP directory
+          sudo chgrp -R "$group_name" /home/garretmunoz/workspace/TX-APCD-PREP
+          sudo chmod -R 774 /home/garretmunoz/workspace/TX-APCD-PREP
+          newgrp - "$group_name"
+          GO=$(stat -c %G /home/garretmunoz/workspace/TX-APCD-PREP)
+          echo "Ownership of the /home/garretmunoz/workspace/TX-APCD-PREP directory belongs to the $GO group"
+        '''
+      }
+    }
+
+    stage('ge environmental setup') {
+      steps {
+        sh '''#!/bin/bash
+          set -e
+          conda_env="ge"
+          directories=(
+            "./etc/conda/activate.d"
+            "./etc/conda/deactivate.d"
+          )
+
+          # Refreshing terminal and activating the Conda service
+          source ~/.bashrc
+          source /opt/miniconda3/etc/profile.d/conda.sh
+
+          # Checking if Conda environment ge exists
+          if conda env list | grep -q "$conda_env"; then
+            echo "Conda environment $conda_env already exists. Continuing..."
+          else
+            # Creating Conda environment
+            echo "Creating Conda environment $conda_env..."
+            conda env create --name "$conda_env" --file /home/garretmunoz/workspace/TX-APCD-PREP/environment.yml
+            echo "Conda environment $conda_env created."
+          fi
+
+          # Activating Conda environment and confirming activation
+          conda activate ge
+          conda env list
+          cd "$CONDA_PREFIX"
+
+          # Performing a for loop for directories
+          for directory in "${directories[@]}"; do
+            if [ -d "$directory" ]; then
+              echo "$directory already exists. Continuing..."
+            else
+              # Creating any missing directories
+              sudo mkdir -p "$directory"
+              echo "Created $directory directory"
+            fi
+          done
+
+          # Copying files into target directory
+          sudo cp -rf /home/garretmunoz/workspace/TX-APCD-PREP/env_vars.sh "./etc/conda/activate.d/env_vars.sh"
+          sudo cp -rf /home/garretmunoz/workspace/TX-APCD-PREP/env_vars_deactivate.sh "./etc/conda/deactivate.d/env_vars.sh"
+        '''
+      }
+    }
+    
+    stage('copy bash files to required locations') {
+      steps {
+        sh '''#!/bin/bash 
+            set -e
+            sudo cp ~/workspace/TX-APCD-DEPLOY/systemd_services/prefect-agent-stage-1.service /etc/systemd/system/prefect-agent-stage-1.service
+            sudo cp ~/workspace/TX-APCD-DEPLOY/systemd_services/prefect-orion.service /etc/systemd/system/prefect-orion.service        
+            sudo cp ~/workspace/TX-APCD-DEPLOY/bash_scripts/prefect_orion_runner.sh /home/prefect/scripts/prefect_orion_runner.sh
+            sudo cp ~/workspace/TX-APCD-DEPLOY/bash_scripts/prefect_agent_stage_1.sh /home/prefect/scripts/prefect_agent_stage_1.sh
+         '''
+      }
+    }
+    stage('starting prefect-orion.service') {
+      steps {
+        sh '''#!/bin/bash
+            set -e
+            cd /etc/systemd/system
+            sudo chmod +x /etc/systemd/system/prefect-agent-stage-1.service /etc/systemd/system/prefect-orion.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable prefect-orion.service
+            sudo systemctl restart prefect-orion.service
+            sudo systemctl status prefect-orion.service
+            sudo systemctl enable prefect-agent-stage-1.service
+            sudo systemctl restart prefect-agent-stage-1.service
+            sudo systemctl status prefect-agent-stage-1.service
+        
+        prefect_orion_status=$(sudo systemctl status prefect-orion.service | grep "Active:" | awk '{print $2}')
+        prefect_agent_stage_1_status=$(sudo systemctl status prefect-agent-stage-1.service | grep "Active:" | awk '{print $2}')
+        
+        # Check prefect-orion.service is running
+        if [ "$prefect_orion_status" != "active" ]; then
+          echo "Error: prefect-orion.service is not active"
+          exit 1
+        else
+          echo "prefect-orion.service is active"
+        fi
+        
+        # Check prefect-agent_stage_1.service is running
+        if [ "$prefect_agent_stage_1_status" != "active" ]; then
+          echo "Error: prefect-agent-stage-1.service is not active"
+          exit 1
+        else
+          echo "prefect-agent-stage-1.service is active"
+        fi
+     '''
+      }
+    }
+    stage('Deployed') {
+      steps {
+        sh '''#!/bin/bash
+            set -e
+            cd /opt/TX-APCD/prefection
+            source /opt/miniconda3/etc/profile.d/conda.sh
+            conda activate ge
+            conda env list
+            PATH=$PATH:~/workspace/TX-APCD-PREP/env/bin/
+            cp -rf /home/garretmunoz/workspace/TX-APCD-PREP/prefection/deployments /opt/TX-APCD/prefection/
+            prefect deployment apply ./deployments/stage_1_orchestrator_adhoc-deployment.yaml
+            prefect deployment apply ./deployments/stage_1_orchestrator_schedule_pro-deployment.yaml
+            prefect deployment apply ./deployments/stage_1_orchestrator_schedule-deployment.yaml
+            echo "Deployment Successful"
+        '''
+      }
+    }
+    
+  }
+}
