@@ -63,12 +63,12 @@ pipeline {
           set -e
           group_name="G-824050"
           
-          # Changing group ownership of the /home/garretmunoz/workspace/TX-APCD-PREP directory
-          sudo chgrp -R "$group_name" /home/garretmunoz/workspace/TX-APCD-PREP
-          sudo chmod -R 774 /home/garretmunoz/workspace/TX-APCD-PREP
+          # Changing group ownership of the /home/garretmunoz/workspace/TX-APCD directory
+          sudo chgrp -R "$group_name" /home/stanley/workspace/TX-APCD
+          sudo chmod -R 774 /home/stanley/workspace/TX-APCD
           newgrp - "$group_name"
-          GO=$(stat -c %G /home/garretmunoz/workspace/TX-APCD-PREP)
-          echo "Ownership of the /home/garretmunoz/workspace/TX-APCD-PREP directory belongs to the $GO group"
+          GO=$(stat -c %G /home/stanley/workspace/TX-APCD-PREP)
+          echo "Ownership of the /home/stanley/workspace/TX-APCD directory belongs to the $GO group"
         '''
       }
     }
@@ -93,7 +93,7 @@ pipeline {
           else
             # Creating Conda environment
             echo "Creating Conda environment $conda_env..."
-            conda env create --name "$conda_env" --file /home/garretmunoz/workspace/TX-APCD-PREP/environment.yml
+            conda env create --name "$conda_env" --file /home/garretmunoz/workspace/TX-APCD/environment.yml
             echo "Conda environment $conda_env created."
           fi
 
